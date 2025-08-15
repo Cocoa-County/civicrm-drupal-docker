@@ -1,0 +1,16 @@
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.prod.example
+
+# Vendor (Composer) if present locally
+/vendor/
+
+# Node-related (if any)
+/node_modules/
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+.vscode/

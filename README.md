@@ -10,22 +10,32 @@ This docker-compose spins up:
 
 ## Quick start
 
-1) Start the stack
+1) Configure environment
+
+Copy one of the examples and adjust values:
+
+```powershell
+cp .env.example .env       # for dev
+# or
+cp .env.prod.example .env  # for production
+```
+
+2) Start the stack
 
 ```powershell
 # From repo root
-docker compose up -d --build
+docker compose --profile dev up -d --build
 ```
 
-2) Visit apps
-- Site: http://localhost:8080
-- Adminer: http://localhost:8081 (Server: db, User: drupal, Pass: drupal, DB: drupal)
-- MailHog: http://localhost:8025
+3) Visit apps
+- Site: http://localhost:${WEB_PORT:-8080}
+- Adminer (dev only): http://localhost:${ADMINER_PORT:-8081} (Server: db, User: ${DB_USER}, Pass: ${DB_PASSWORD}, DB: ${DB_NAME})
+- MailHog (dev only): http://localhost:${MAILHOG_HTTP_PORT:-8025}
 
-3) Drupal install
+4) Drupal install
 - Use database host `db`, database `drupal`, username `drupal`, password `drupal`.
 
-4) CiviCRM
+5) CiviCRM
 - Use the Drupal container for CiviCRM CLI/admin tasks. Example:
 
 ```powershell
@@ -57,3 +67,7 @@ docker compose exec drupal bash
 ```
 
 For production, prefer a proper Composer-managed code repo on the host, bind-mounted into `/var/www/html`, and a custom image that installs dependencies during build.
+
+### Dev vs Prod
+- Dev: use `--profile dev` to include Adminer and MailHog.
+- Prod: omit the profile; consider setting `APP_ENV=prod` in `.env` and exposing only `WEB_PORT`.

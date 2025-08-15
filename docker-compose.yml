@@ -1,15 +1,18 @@
-name: assessor-website-2026
+name: ${COMPOSE_PROJECT_NAME:-assessor-website-2026}
 
 services:
 
   drupal:
-    image: drupal:11.1.8-php8.3-fpm
+    image: ${PHP_IMAGE:-drupal:11.1.8-php8.3-fpm}
     depends_on:
       db:
         condition: service_healthy
     environment:
       # Configure PHP to show errors in dev (optional)
-      PHP_ERRORS: "1"
+      PHP_ERRORS: ${PHP_ERRORS:-1}
+      APP_ENV: ${APP_ENV:-dev}
+    env_file:
+      - ./.env
     volumes:
       - ./web:/var/www/html/web
       - ./vendor:/var/www/html/vendor
@@ -22,12 +25,14 @@ services:
     restart: unless-stopped
 
   web:
-    image: nginx:1.27-alpine
+    image: ${NGINX_IMAGE:-nginx:1.27-alpine}
     depends_on:
       drupal:
         condition: service_started
     ports:
-      - "8080:80"
+      - "${WEB_PORT:-8080}:80"
+    env_file:
+      - ./.env
     volumes:
       - ./web:/var/www/html/web:ro
       - ./vendor:/var/www/html/vendor:ro
@@ -36,12 +41,12 @@ services:
     restart: unless-stopped
 
   db:
-    image: mariadb:10.11
+    image: ${DB_IMAGE:-mariadb:10.11}
     environment:
-      MARIADB_DATABASE: drupal
-      MARIADB_USER: drupal
-      MARIADB_PASSWORD: drupal
-      MARIADB_ROOT_PASSWORD: rootpassword
+      MARIADB_DATABASE: ${DB_NAME:-drupal}
+      MARIADB_USER: ${DB_USER:-drupal}
+      MARIADB_PASSWORD: ${DB_PASSWORD:-drupal}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpassword}
     volumes:
       - db-data:/var/lib/mysql
     healthcheck:
@@ -54,21 +59,23 @@ services:
   # Lightweight DB access tool
   adminer:
     image: adminer:4
+    profiles: ["dev"]
     depends_on:
       db:
         condition: service_healthy
     environment:
       ADMINER_DEFAULT_SERVER: db
     ports:
-      - "8081:8080"
+      - "${ADMINER_PORT:-8081}:8080"
     restart: unless-stopped
 
   # Test/inspect outbound emails at http://localhost:8025
   mailhog:
     image: mailhog/mailhog:latest
+    profiles: ["dev"]
     ports:
-      - "1025:1025"  # SMTP
-      - "8025:8025"  # Web UI
+      - "${MAILHOG_SMTP_PORT:-1025}:1025"  # SMTP
+      - "${MAILHOG_HTTP_PORT:-8025}:8025"  # Web UI
     restart: unless-stopped
 
 volumes:
