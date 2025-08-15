@@ -71,3 +71,6 @@ For production, prefer a proper Composer-managed code repo on the host, bind-mou
 ### Dev vs Prod
 - Dev: use `--profile dev` to include Adminer and MailHog.
 - Prod: omit the profile; consider setting `APP_ENV=prod` in `.env` and exposing only `WEB_PORT`.
+
+### AI assistant instructions
+See `.github/copilot-instructions.md` for repo-specific conventions and guidance that assistants should follow.
