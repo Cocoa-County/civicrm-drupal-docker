@@ -1,83 +1,46 @@
-name: ${COMPOSE_PROJECT_NAME:-assessor-website-2026}
-
 services:
-
   drupal:
-    image: ${PHP_IMAGE:-drupal:11.1.8-php8.3-fpm}
-    depends_on:
-      db:
-        condition: service_healthy
+    image: drupal:11.1.8-php8.3-fpm
+    container_name: drupal_app
+    restart: unless-stopped
+    volumes:
+      - drupal_data:/var/www/html
     environment:
-      # Configure PHP to show errors in dev (optional)
-      PHP_ERRORS: ${PHP_ERRORS:-1}
-      APP_ENV: ${APP_ENV:-dev}
-    env_file:
-      - ./.env
-    volumes:
-      - ./web:/var/www/html/web
-      - ./vendor:/var/www/html/vendor
-      - files-data:/var/www/html/web/sites/default/files
-    healthcheck:
-      test: ["CMD", "php", "-v"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
-  web:
-    image: ${NGINX_IMAGE:-nginx:1.27-alpine}
+      DRUPAL_DB_HOST: db
+      DRUPAL_DB_NAME: ${DB_NAME}
+      DRUPAL_DB_USER: ${DB_USER}
+      DRUPAL_DB_PASSWORD: ${DB_PASSWORD}
     depends_on:
-      drupal:
-        condition: service_started
-    ports:
-      - "${WEB_PORT:-8080}:80"
-    env_file:
-      - ./.env
-    volumes:
-      - ./web:/var/www/html/web:ro
-      - ./vendor:/var/www/html/vendor:ro
-      - files-data:/var/www/html/web/sites/default/files:ro
-      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
-    restart: unless-stopped
+      - db
 
   db:
-    image: ${DB_IMAGE:-mariadb:10.11}
+    image: mariadb:10.11
+    container_name: drupal_db
+    restart: unless-stopped
     environment:
-      MARIADB_DATABASE: ${DB_NAME:-drupal}
-      MARIADB_USER: ${DB_USER:-drupal}
-      MARIADB_PASSWORD: ${DB_PASSWORD:-drupal}
-      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpassword}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
     volumes:
-      - db-data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-    restart: unless-stopped
+      - db_data:/var/lib/mysql
 
-  # Lightweight DB access tool
-  adminer:
-    image: adminer:4
-    profiles: ["dev"]
+  nginx:
+    image: nginx:stable-alpine
+    container_name: drupal_nginx
+    restart: unless-stopped
+    ports:
+      - "8080:80"
     depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      ADMINER_DEFAULT_SERVER: db
-    ports:
-      - "${ADMINER_PORT:-8081}:8080"
-    restart: unless-stopped
-
-  # Test/inspect outbound emails at http://localhost:8025
-  mailhog:
-    image: mailhog/mailhog:latest
-    profiles: ["dev"]
-    ports:
-      - "${MAILHOG_SMTP_PORT:-1025}:1025"  # SMTP
-      - "${MAILHOG_HTTP_PORT:-8025}:8025"  # Web UI
-    restart: unless-stopped
+      - drupal
+    volumes:
+      - drupal_data:/var/www/html:ro
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
 
 volumes:
-  db-data:
-  files-data:
+  db_data:
+  drupal_data:
+
+networks:
+  default:
+    driver: bridge
