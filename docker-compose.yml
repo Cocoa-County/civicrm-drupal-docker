@@ -1,10 +1,10 @@
 services:
   drupal:
-    image: drupal:11.1.8-php8.3-fpm
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
     container_name: drupal_app
     restart: unless-stopped
-    volumes:
-      - drupal_data:/var/www/html
     environment:
       DRUPAL_DB_HOST: db
       DRUPAL_DB_NAME: ${DB_NAME}
@@ -12,6 +12,14 @@ services:
       DRUPAL_DB_PASSWORD: ${DB_PASSWORD}
     depends_on:
       - db
+    volumes:
+      - drupal_data:/var/www/html
+      - ./web/composer.json:/var/www/html/composer.json
+      - ./web/composer.lock:/var/www/html/composer.lock
+      - ./web/modules:/var/www/html/modules
+      - ./web/profiles:/var/www/html/profiles
+      - ./web/themes:/var/www/html/themes
+      - ./web/sites:/var/www/html/sites
 
   db:
     image: mariadb:10.11
@@ -30,7 +38,7 @@ services:
     container_name: drupal_nginx
     restart: unless-stopped
     ports:
-      - "8080:80"
+      - "${PORT_HTTP:-8080}:80"
     depends_on:
       - drupal
     volumes:
