@@ -1,0 +1,25 @@
+# General
+/.DS_Store
+/.idea/
+
+# vscode
+/.vscode/
+# Keep shared IDE config in repo
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/extensions.json
+
+# Docker / local
+/.env
+/.env.local
+
+# Drupal-specific
+# Ignore Twig compiled cache files (sometimes placed under files/php/twig)
+web/sites/*/files/php/twig/
+
+# Ignore IDE and OS files
+Thumbs.db
+
+# Keep the README and other project files tracked
+!README.md
