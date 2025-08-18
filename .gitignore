@@ -23,3 +23,5 @@ Thumbs.db
 
 # Keep the README and other project files tracked
 !README.md
+
+# Local env\n.env
