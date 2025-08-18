@@ -1,20 +1,12 @@
-# Assessor Website (2026)
+# civiccrm-drupal-docker
 
-This repository contains a Drupal-based website (with CiviCRM modules present) and a Docker Compose setup to run the stack locally: a Drupal application, a MariaDB database, and an Nginx reverse proxy.
+Minimal Docker Compose setup to run Drupal + CiviCRM-related code locally.
 
-## Quick plan
-- Inspect `docker-compose.yml` to understand how the app is wired.
-- Provide quick start instructions, environment variables, and useful paths for development.
+## Quick start
 
-## Requirements (assumptions)
-- Docker and Docker Compose installed on the host.
-- A `.env` file (or environment) with database credentials and optional port override. See sample below.
+1. Create a `.env` file at the repo root with these values (example):
 
-## Quick start (development)
-1. Create a `.env` file in the repository root with the variables below (or export them into your shell):
-
-```powershell
-# .env (example)
+```
 DB_NAME=drupal
 DB_USER=drupal
 DB_PASSWORD=drupal_password
@@ -22,90 +14,40 @@ DB_ROOT_PASSWORD=root_password
 PORT_HTTP=8080
 ```
 
-2. Build and start the stack:
+2. Build and start:
 
-```powershell
+```
+# PowerShell
 docker compose up -d --build
 ```
 
-3. Access the site in your browser at http://localhost:8080 (or the port you set in `PORT_HTTP`).
+3. Open http://localhost:8080 (or the port in `PORT_HTTP`).
 
-4. Stop the stack:
+Stop the stack:
 
-```powershell
+```
+# PowerShell
 docker compose down
 ```
 
-## Services (from `docker-compose.yml`)
-- drupal: Built from `docker/Dockerfile`. Mounts the `web/` directory into `/var/www/html` and uses environment variables to connect to the database.
-- db: MariaDB (10.11) for persistent site data. Uses `db_data` volume for /var/lib/mysql.
-- nginx: Nginx (stable-alpine) as a reverse proxy serving the Drupal site; maps host port `${PORT_HTTP:-8080}` to container port 80 and mounts `nginx/default.conf`.
+## What the compose file provides
 
-## Volumes
-- `db_data` — MariaDB data, persisted under Docker volumes.
-- `drupal_data` — site files under `/var/www/html` in the Drupal container. The compose file mounts the workspace `web/` directories into the container so edits in the workspace are reflected inside the container.
+- `drupal` — built from `docker/Dockerfile`, with site code mounted at `/var/www/html` (see `web/`).
+- `db` — MariaDB (persistent via `db_data`).
+- `nginx` — Nginx proxy serving the site on the host port.
 
-## Important repository paths
-- `docker/` — Docker image build context and `Dockerfile` used to build the `drupal` service.
-- `nginx/default.conf` — Nginx configuration used by the `nginx` service.
-- `web/` — Drupal code and assets. Notable contents:
-  - `web/composer.json` and `web/composer.lock` — composer manifests used by the container.
-  - `web/modules/` — contrib/custom modules. Contains `civicrm/` with CiviCRM integration files and module code.
-  - `web/sites/` — Drupal site configurations and default settings.
+## Important files
 
-## Environment variables used by compose
-- `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_ROOT_PASSWORD` — used to configure MariaDB and Drupal database connection.
-- `PORT_HTTP` — optional port mapping for Nginx (defaults to 8080 when not provided).
+- `docker/Dockerfile` — builds the runtime image.
+- `docker-compose.yml` — service wiring and volumes.
+- `nginx/default.conf` — nginx config.
 
-## Development notes
-- The `drupal` service mounts `web/` into the container which means you can edit PHP, YAML and other assets locally and reload the site.
-- Composer operations (install/update) should be executed where appropriate: either from the host (if PHP & Composer configured) or inside the `drupal` container (recommended to match environment). Example:
+## Notes
 
-```powershell
-# Run composer inside the running drupal container (replace container name if different)
-docker exec -it drupal_app composer install
-```
+- The compose file currently mounts `web/composer.json` and `web/composer.lock` into the container; keep those files present.
+- On Windows, bind mounts can cause file-permission issues; using the named `drupal_data` volume avoids those issues.
+- CI builds the image on push (see `.github/workflows/docker-image.yml`).
 
-## Troubleshooting
-- If the database container fails to start, check logs:
+## Want more?
 
-```powershell
-docker compose logs db --follow
-```
-
-- If the site is not reachable, confirm Nginx is running and the port is available:
-
-```powershell
-docker compose ps
-```
-
-## Useful commands
-- Start (build if needed): `docker compose up -d --build`
-- Stop and remove containers: `docker compose down`
-- View logs (follow): `docker compose logs -f`
-- Execute a shell in the drupal container: `docker exec -it drupal_app /bin/bash` (or `/bin/sh`)
-
-## Next steps / suggestions
-- Add a `README.local.md` or `DEVELOPMENT.md` with site-specific setup (Drupal install profile, admin user, CiviCRM bootstrap steps).
-- Add a sample `.env.example` to the repo for clearer onboarding.
-
-## Repository policy (site files and templates)
-- This repository tracks site files and settings under `web/sites/*` (for deployment use). That means uploaded files and `settings.php` are included in the repo by design.
-- Generated/compiled Twig cache files are ignored via `.gitignore` (`web/sites/*/files/php/twig/`). If generated cache PHP files ended up tracked previously, you can remove them from the index without deleting local files using the commands below.
-
-To remove already-tracked generated Twig cache files (safe — keeps files on disk):
-
-```powershell
-# remove only the compiled twig cache from git index
-git rm -r --cached "web/sites/*/files/php/twig"
-git commit -m "Remove generated Twig cache from repository (keep files locally)"
-git push origin $(git rev-parse --abbrev-ref HEAD)
-```
-
-If you'd prefer a history purge to permanently remove those files from the repository history (rewrite), ask and I'll outline the more invasive steps (BFG or git filter-repo).
-
----
-Generated by examining `docker-compose.yml` and repository layout. If you'd like, I can also:
-- add a `.env.example` file,
-- create a short `DEVELOPMENT.md` with composer & drush workflows, or
-- validate container startup and capture `docker compose ps` / logs from your environment.
+I can add a `.env.example`, a short `DEVELOPMENT.md` (composer/drush tips), or a CI smoke-test step — tell me which and I'll add it.
