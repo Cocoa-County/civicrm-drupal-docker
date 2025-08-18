@@ -3,6 +3,9 @@ name: CI - Build and Push Docker image
 on:
   push:
     branches: [ master ]
+    paths:
+      - 'docker/Dockerfile'
+      - '.github/workflows/docker-image.yml'
 
 permissions:
   contents: read
