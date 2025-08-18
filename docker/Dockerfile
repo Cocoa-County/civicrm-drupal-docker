@@ -103,5 +103,10 @@ COPY --from=builder --chown=www-data:www-data /var/www/html/vendor /var/www/html
 
 # Copy cv CLI from builder (downloaded there) into the runtime image
 COPY --from=builder /usr/local/bin/cv /usr/local/bin/cv
+# Copy drupal entrypoint script (site init / autoinstall)
+COPY docker/drupal-entrypoint.sh /usr/local/bin/drupal-entrypoint.sh
+RUN chmod +x /usr/local/bin/drupal-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/drupal-entrypoint.sh"]
 
 USER www-data
