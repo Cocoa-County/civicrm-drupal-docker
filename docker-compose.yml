@@ -5,6 +5,8 @@ services:
       dockerfile: docker/Dockerfile
     container_name: drupal_app
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       DRUPAL_DB_HOST: db
       DRUPAL_DB_NAME: ${DB_NAME}
