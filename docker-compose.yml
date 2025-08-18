@@ -16,10 +16,6 @@ services:
       - drupal_data:/var/www/html
       - ./web/composer.json:/var/www/html/composer.json
       - ./web/composer.lock:/var/www/html/composer.lock
-      - ./web/modules:/var/www/html/modules
-      - ./web/profiles:/var/www/html/profiles
-      - ./web/themes:/var/www/html/themes
-      - ./web/sites:/var/www/html/sites
 
   db:
     image: mariadb:10.11
