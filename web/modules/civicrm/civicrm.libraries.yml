@@ -1,5 +1,0 @@
-civicrm-icons:
-  version: VERSION
-  css:
-    component:
-      css/civicrm.icons.css: { media: screen }
