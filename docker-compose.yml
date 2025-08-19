@@ -13,6 +13,13 @@ services:
       DRUPAL_DB_USER: ${DB_USER}
       DRUPAL_DB_PASSWORD: ${DB_PASSWORD}
       DRUPAL_DB_PORT: ${DRUPAL_DB_PORT:-3306}
+      # Enable one-time automated site install inside the container (set to 1 to run)
+      AUTO_INSTALL: ${AUTO_INSTALL:-0}
+      # If set to 1, container will exit on autoinstall failure
+      AUTO_INSTALL_REQUIRED: ${AUTO_INSTALL_REQUIRED:-0}
+      DRUPAL_SITE_NAME: '${DRUPAL_SITE_NAME:-Cocoa County Drupal}'
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASS: ${ADMIN_PASS:-admin}
     depends_on:
       db:
         condition: service_healthy
