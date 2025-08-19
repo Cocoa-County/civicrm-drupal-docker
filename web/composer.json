@@ -14,6 +14,10 @@
     "minimum-stability": "dev",
     "prefer-stable": true,
     "config": {
+        "platform": { "php": "8.3.0" },
+        "optimize-autoloader": true,
+        "sort-packages": true,
+        "cache-dir": "/tmp/composer-cache",
         "allow-plugins": {
             "composer/installers": true,
             "cweagans/composer-patches": true,
@@ -29,5 +33,10 @@
         "compile-whitelist": [
             "civicrm/*"
         ]
+    }
+
+    ,"scripts": {
+        "ci-install": "composer install --no-interaction --no-dev --prefer-dist --no-progress",
+        "compile": "composer compile --all --no-interaction"
     }
 }

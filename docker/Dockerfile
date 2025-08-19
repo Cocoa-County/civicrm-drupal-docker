@@ -1,5 +1,5 @@
 ### Builder stage
-FROM drupal:11.1.8-php8.3-fpm AS builder
+FROM php:8.3-fpm AS builder
 
 # Install build tools and native libraries.
 USER root
@@ -28,22 +28,20 @@ RUN set -eux; \
     ; \
     rm -rf /var/lib/apt/lists/*;
 
-# Copy project composer.json and set the working directory.
-COPY web/composer.json /var/www/html/composer.json
-COPY web/composer.lock /var/www/html/composer.lock
-WORKDIR /var/www/html
-# Composer provided by base image
+# Use /opt/drupal/web as the project root during build. The runtime image will
+# symlink /opt/drupal/web -> /var/www/html so the container and nginx both see
+# the same files while allowing the compose volume to target /opt/drupal/web.
+COPY web/composer.json /opt/drupal/web/composer.json
+# COPY web/composer.lock /opt/drupal/web/composer.lock
+
+# Install Composer (php image doesn't include it by default)
+RUN set -eux; \
+    curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer; \
+    composer --version
 
 # Set composer env vars so all composer invocations use the same home and allow superuser
 ENV COMPOSER_ALLOW_SUPERUSER=1 \
     COMPOSER_HOME=/tmp/composer
-
-# Composer global config
-RUN composer config -g cache-dir /tmp/composer-cache
-RUN composer config --no-plugins allow-plugins.composer/installers true --global
-RUN composer config --no-plugins allow-plugins.cweagans/composer-patches true --global
-RUN composer config --no-plugins allow-plugins.civicrm/composer-downloads-plugin true --global
-RUN composer config --no-plugins allow-plugins.civicrm/composer-compile-plugin true --global
 
 # Configure and install PHP extensions
 RUN set -eux; \
@@ -68,7 +66,7 @@ RUN COMPOSER_COMPILE=1 composer compile --all --no-interaction
 RUN wget -qO /usr/local/bin/cv https://download.civicrm.org/cv/cv.phar && chmod +x /usr/local/bin/cv
 
 ### Runtime stage
-FROM drupal:11.1.8-php8.3-fpm
+FROM php:8.3-fpm
 
 # Minimal runtime image: install only small runtime packages (curl + ca-certificates)
 # and copy compiled PHP extensions and php conf from the builder stage. This keeps
@@ -99,10 +97,14 @@ RUN set -eux; \
 COPY --from=builder /usr/local/lib/php/extensions /usr/local/lib/php/extensions
 COPY --from=builder /usr/local/etc/php/conf.d /usr/local/etc/php/conf.d
 
-# Copy composer.json and vendor from builder
-COPY --from=builder /var/www/html/composer.json /var/www/html/composer.json
-COPY --from=builder /var/www/html/composer.lock /var/www/html/composer.lock
-COPY --from=builder --chown=www-data:www-data /var/www/html/vendor /var/www/html/vendor
+# Copy composer.json and vendor from builder into /opt/drupal/web
+COPY --from=builder /opt/drupal/web/composer.json /opt/drupal/web/composer.json
+COPY --from=builder /opt/drupal/web/composer.lock /opt/drupal/web/composer.lock
+COPY --from=builder --chown=www-data:www-data /opt/drupal/web/vendor /opt/drupal/web/vendor
+
+# Ensure the runtime symlinks the drupal path into /var/www/html so other
+# services (nginx) using /var/www/html will see the same files.
+RUN ln -sfn /opt/drupal/web /var/www/html
 
 # Copy cv CLI from builder (downloaded there) into the runtime image
 COPY --from=builder /usr/local/bin/cv /usr/local/bin/cv
