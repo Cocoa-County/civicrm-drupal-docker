@@ -78,6 +78,10 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        # Provide ICU runtime libraries so the intl PHP extension can load
+        libicu-dev \
+        # MySQL client program for CLI tasks and runtime MySQL client libraries
+        default-mysql-client \
         # Runtime libraries required by the GD extension (ensure AVIF and other
         # image format libraries are present so the compiled gd extension can load)
         libpng-dev \

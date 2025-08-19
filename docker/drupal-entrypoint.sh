@@ -1,139 +1,146 @@
-#!/bin/sh
+#!/usr/bin/env bash
 set -euo pipefail
 
-# drupal-entrypoint.sh
-# Idempotent Drupal site install using drush. Exits with non-zero on fatal errors.
+# Drupal entrypoint: wait for DB and run drush site:install automatically when
+# the container starts if the site is not yet installed.
 
-# Default env vars
-: "${DO_INSTALL:=false}"
-: "${FORCE_REINSTALL:=false}"
-: "${SITES_SUBDIR:=default}"
-: "${SITE_NAME:=Drupal}"
-: "${SITE_PROFILE:=standard}"
-: "${ADMIN_USER:=admin}"
-: "${ADMIN_PASS:=}"
-: "${SITE_MAIL:=admin@example.org}"
-
-# DB envs expected: DRUPAL_DB_HOST, DRUPAL_DB_PORT (optional), DRUPAL_DB_NAME, DRUPAL_DB_USER, DRUPAL_DB_PASSWORD
-
-echo "[entrypoint] starting drupal entrypoint"
-
-# Locate drush: prefer project vendor bin, fall back to PATH
-: "${DRUSH_CMD:=}"
-if [ -x "/var/www/html/vendor/bin/drush" ]; then
-  DRUSH_CMD="/var/www/html/vendor/bin/drush"
-elif [ -x "/opt/drupal/vendor/bin/drush" ]; then
-  DRUSH_CMD="/opt/drupal/vendor/bin/drush"
+DRUPAL_HTML_DIR=/var/www/html
+# Prefer /var/www/html/web if present
+if [ -d "$DRUPAL_HTML_DIR/web" ]; then
+  DRUPAL_ROOT="$DRUPAL_HTML_DIR/web"
 else
-  # last resort: use whatever 'drush' in PATH resolves to
-  if command -v drush >/dev/null 2>&1; then
-    DRUSH_CMD="$(command -v drush)"
-  else
-    DRUSH_CMD="drush"
-  fi
+  DRUPAL_ROOT="$DRUPAL_HTML_DIR"
 fi
-echo "[entrypoint] using drush command: $DRUSH_CMD"
-DRUPAL_ROOT="/var/www/html"
+
+# Locate drush binary: try system drush then vendor/bin
+if command -v drush >/dev/null 2>&1; then
+  DRUSH_BIN="$(command -v drush)"
+elif [ -x "$DRUPAL_HTML_DIR/vendor/bin/drush" ]; then
+  DRUSH_BIN="$DRUPAL_HTML_DIR/vendor/bin/drush"
+elif [ -x "$DRUPAL_ROOT/../vendor/bin/drush" ]; then
+  DRUSH_BIN="$DRUPAL_ROOT/../vendor/bin/drush"
+else
+  DRUSH_BIN=""
+fi
+
+SITE_SETTINGS="$DRUPAL_ROOT/sites/default/settings.php"
 
 wait_for_db() {
-  # Wait until the DB accepts connections
-  DB_HOST="${DRUPAL_DB_HOST:-}"
-  DB_NAME="${DRUPAL_DB_NAME:-}"
-  DB_USER="${DRUPAL_DB_USER:-}"
-  DB_PASS="${DRUPAL_DB_PASSWORD:-}"
-  DB_PORT="${DRUPAL_DB_PORT:-3306}"
-
-  if [ -z "$DB_HOST" ] || [ -z "$DB_NAME" ] || [ -z "$DB_USER" ]; then
-    echo "[entrypoint] DB env vars missing (DRUPAL_DB_HOST/DRUPAL_DB_NAME/DRUPAL_DB_USER)"
-    return 1
-  fi
-
-  echo "[entrypoint] waiting for DB at $DB_HOST:$DB_PORT..."
-  tries=0
-  # Use a small PHP mysqli connection check instead of drush. Drush requires
-  # a configured Drupal site; using PHP directly lets us probe the DB socket
-  # before settings.php exists.
-  until true; do
-    tries=$((tries + 1))
-    out=$(php -r "mysqli_report(MYSQLI_REPORT_OFF); \$m=new mysqli('${DB_HOST}', '${DB_USER}', '${DB_PASS}', '${DB_NAME}', ${DB_PORT:-3306}); if(\$m->connect_errno) { echo 'CONNECT_ERR:'.\$m->connect_errno.':'.\$m->connect_error; exit(1);} echo 'CONNECT_OK';" 2>&1) || rc=$?
-    rc=${rc:-0}
-    if [ $rc -eq 0 ] && echo "$out" | grep -q CONNECT_OK; then
-      break
+  local host=${1:-${DB_HOST:-db}}
+  local port=${2:-${DB_PORT:-3306}}
+  # Try up to 30 times with 2s delay
+  for i in $(seq 1 30); do
+    if bash -c "</dev/tcp/${host}/${port}" >/dev/null 2>&1; then
+      echo "Database available at ${host}:${port}"
+      return 0
     fi
-    echo "[entrypoint] php DB check failed (try=$tries rc=$rc) output: $out"
-    if [ $tries -gt 30 ]; then
-      echo "[entrypoint] timed out waiting for DB"
-      return 1
-    fi
+    echo "Waiting for database ${host}:${port} (${i}/30)..."
     sleep 2
   done
-  echo "[entrypoint] DB ready"
-}
-
-is_drupal_installed() {
-  # Use drush to check for the key_value table
-  # POSIX-safe: build optional --uri arg as a string
-  EXTRA_DRUSH_URI=""
-  if [ -n "${SITE_URI:-}" ]; then
-    EXTRA_DRUSH_URI="--uri=${SITE_URI}"
-  fi
-
-  if $DRUSH_CMD --root="$DRUPAL_ROOT" $EXTRA_DRUSH_URI sql:query "SHOW TABLES LIKE 'key_value';" | grep -q key_value; then
-    return 0
-  fi
+  echo "Timed out waiting for database ${host}:${port}"
   return 1
 }
 
-run_site_install() {
-  if [ -z "$ADMIN_PASS" ]; then
-    echo "[entrypoint] ADMIN_PASS is required when DO_INSTALL=true"
+auto_install() {
+  if [ -z "$DRUSH_BIN" ]; then
+    echo "drush not found; skipping automatic install."
+    return
+  fi
+
+  if [ -f "$SITE_SETTINGS" ]; then
+    echo "Drupal appears installed (found $SITE_SETTINGS). Running cache rebuild and exiting entrypoint prep."
+    # Ensure drush uses the correct root
+    "$DRUSH_BIN" -r "$DRUPAL_ROOT" cr || true
+    return
+  fi
+
+  echo "No settings.php found; proceeding with automated site installation using drush."
+
+  # Ensure settings directory exists and is writable
+  mkdir -p "$DRUPAL_ROOT/sites/default/files"
+  chmod 775 "$DRUPAL_ROOT/sites/default/files" || true
+
+  # If default.settings.php exists, copy it to settings.php so drush can write to it.
+  if [ -f "$DRUPAL_ROOT/sites/default/default.settings.php" ] && [ ! -f "$SITE_SETTINGS" ]; then
+    cp "$DRUPAL_ROOT/sites/default/default.settings.php" "$SITE_SETTINGS"
+    chmod 664 "$SITE_SETTINGS" || true
+  fi
+
+  # Build DB URL
+  # Support both DB_* env names and DRUPAL_DB_* as provided by the compose file.
+  DB_DRIVER=${DB_DRIVER:-mysql}
+  DB_HOST=${DB_HOST:-${DRUPAL_DB_HOST:-db}}
+  DB_PORT=${DB_PORT:-${DRUPAL_DB_PORT:-3306}}
+  DB_NAME=${DB_NAME:-${DRUPAL_DB_NAME:-drupal}}
+  DB_USER=${DB_USER:-${DRUPAL_DB_USER:-drupal}}
+  # Compose commonly uses DB_PASSWORD; accept DB_PASS or DB_PASSWORD or DRUPAL_DB_PASSWORD
+  DB_PASS=${DB_PASS:-${DB_PASSWORD:-${DRUPAL_DB_PASSWORD:-drupal}}}
+
+  DB_URL="${DB_DRIVER}://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
+
+  SITE_NAME=${SITE_NAME:-Drupal}
+  PROFILE=${PROFILE:-standard}
+  ACCOUNT_NAME=${ACCOUNT_NAME:-admin}
+  ACCOUNT_PASS=${ACCOUNT_PASS:-admin}
+  ACCOUNT_MAIL=${ACCOUNT_MAIL:-admin@example.com}
+  SITE_MAIL=${SITE_MAIL:-"${ACCOUNT_MAIL}"}
+
+  echo "Waiting for database before running site install..."
+  if ! wait_for_db "$DB_HOST" "$DB_PORT"; then
+    echo "Database not available; aborting automated installation."
     return 1
   fi
-  echo "[entrypoint] running drush site-install"
-  $DRUSH_CMD --root="$DRUPAL_ROOT" $EXTRA_DRUSH_URI site-install "$SITE_PROFILE" \
-    --site-name="$SITE_NAME" \
-    --account-name="$ADMIN_USER" \
-    --account-pass="$ADMIN_PASS" \
-    --account-mail="$SITE_MAIL" \
-    --db-url="mysql://$DRUPAL_DB_USER:$DRUPAL_DB_PASSWORD@$DRUPAL_DB_HOST/$DRUPAL_DB_NAME" \
-    --sites-subdir="$SITES_SUBDIR" \
-    --yes
-}
 
-main() {
-  if [ "${DO_INSTALL}" != "true" ]; then
-    echo "[entrypoint] DO_INSTALL != true; skipping site install"
-    exec "$@"
-  fi
-
-  wait_for_db || exit 1
-
-  if is_drupal_installed; then
-    if [ "${FORCE_REINSTALL}" = "true" ]; then
-      echo "[entrypoint] FORCE_REINSTALL=true, dropping Drupal tables (dangerous)"
-      # drop all tables - this is destructive and requires explicit opt-in
-  $DRUSH_CMD --root="$DRUPAL_ROOT" $EXTRA_DRUSH_URI sql:query "SET FOREIGN_KEY_CHECKS=0;" || true
-  $DRUSH_CMD --root="$DRUPAL_ROOT" $EXTRA_DRUSH_URI sql:query "SELECT concat('DROP TABLE ', table_name, ';') FROM information_schema.tables WHERE table_schema = '$DRUPAL_DB_NAME';" | $DRUSH_CMD --root="$DRUPAL_ROOT" $EXTRA_DRUSH_URI sql:cli || true
+  echo "Running drush site:install (profile: $PROFILE, site name: '$SITE_NAME')"
+  # Try to ensure the database exists using the mysql client first. Some drush
+  # install paths invoke the mysql CLI to create/drop DBs; if the server does
+  # not support TLS but the client requires it, creation can fail. Try common
+  # non-SSL flags (MariaDB client) before letting drush attempt creation.
+  if command -v mysql >/dev/null 2>&1; then
+    echo "Ensuring database '${DB_NAME}' exists using mysql client..."
+    # Try --ssl=0 (MariaDB/MySQL clients), then --skip-ssl; ignore failures.
+    if mysql -h "$DB_HOST" -P "$DB_PORT" -u"$DB_USER" -p"$DB_PASS" --ssl=0 -e "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\`;" >/dev/null 2>&1; then
+      echo "Database ensured with --ssl=0"
+    elif mysql -h "$DB_HOST" -P "$DB_PORT" -u"$DB_USER" -p"$DB_PASS" --skip-ssl -e "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\`;" >/dev/null 2>&1; then
+      echo "Database ensured with --skip-ssl"
     else
-      echo "[entrypoint] Drupal appears to be installed; skipping site install"
-      exec "$@"
+      echo "Could not ensure database with mysql client; will let drush try."
     fi
   fi
 
-  run_site_install || exit 1
+  "$DRUSH_BIN" -r "$DRUPAL_ROOT" site:install "$PROFILE" \
+    --db-url="$DB_URL" \
+    --site-name="$SITE_NAME" \
+    --account-name="$ACCOUNT_NAME" \
+    --account-pass="$ACCOUNT_PASS" \
+    --account-mail="$ACCOUNT_MAIL" \
+    --site-mail="$SITE_MAIL" \
+    -y
 
-  echo "[entrypoint] post-install: cache rebuild and DB updates"
-  $DRUSH_CMD --root="$DRUPAL_ROOT" $EXTRA_DRUSH_URI cr || true
-  $DRUSH_CMD --root="$DRUPAL_ROOT" $EXTRA_DRUSH_URI updb -y || true
+  echo "Drush site install finished. Clearing cache and ensuring permissions."
+  "$DRUSH_BIN" -r "$DRUPAL_ROOT" cr || true
 
-  echo "[entrypoint] site install complete"
-
-  exec "$@"
+  # secure settings.php
+  chmod 440 "$SITE_SETTINGS" || true
 }
 
-# If no command provided, run php-fpm (container base image default)
-if [ "$#" -eq 0 ]; then
-  set -- php-fpm
+# If the first argument looks like a flag (starts with -), prepend the default
+# command (php-fpm). This allows Docker CMD to be omitted in compose files.
+if [ "${1:-}" = "" ]; then
+  # no command provided; just try install and then start php-fpm
+  auto_install || true
+  exec php-fpm
 fi
 
-main "$@"
+case "$1" in
+  php-fpm|apache2|drush|bash|sh)
+    # Run auto-install before launching main service
+    auto_install || true
+    exec "$@"
+    ;;
+  *)
+    # For arbitrary commands, just run them (but attempt automatic install first)
+    auto_install || true
+    exec "$@"
+    ;;
+esac

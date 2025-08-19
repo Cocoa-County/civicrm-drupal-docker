@@ -12,8 +12,10 @@ services:
       DRUPAL_DB_NAME: ${DB_NAME}
       DRUPAL_DB_USER: ${DB_USER}
       DRUPAL_DB_PASSWORD: ${DB_PASSWORD}
+      DRUPAL_DB_PORT: ${DRUPAL_DB_PORT:-3306}
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     volumes:
       - drupal_data:/var/www/html
       - ./web/composer.json:/var/www/html/composer.json
@@ -28,6 +30,12 @@ services:
       MYSQL_DATABASE: ${DB_NAME}
       MYSQL_USER: ${DB_USER}
       MYSQL_PASSWORD: ${DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$DB_ROOT_PASSWORD\" >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     volumes:
       - db_data:/var/lib/mysql
 
