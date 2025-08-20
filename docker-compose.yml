@@ -24,9 +24,7 @@ services:
       db:
         condition: service_healthy
     volumes:
-      - drupal_data:/opt/drupal/web
-      - ./web/composer.json:/opt/drupal/web/composer.json
-      - ./web/composer.lock:/opt/drupal/web/composer.lock
+      - drupal_data:/var/www/html
 
   db:
     image: mariadb:10.11

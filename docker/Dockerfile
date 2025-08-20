@@ -1,85 +1,81 @@
-### Builder stage
+# Multi-stage Dockerfile for PHP 8.3 FPM (builder -> runtime)
+
+###############################################################################
+# Builder: install Composer, build PHP extensions, install project deps
+###############################################################################
 FROM php:8.3-fpm AS builder
 
-# Install build tools and native libraries.
-USER root
-RUN set -eux; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends \
-        build-essential \
-        autoconf \
-        pkg-config \
+LABEL maintainer="Cocoa-County"
+
+# Install packages needed for Composer and building extensions
+RUN set -eux \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
         ca-certificates \
-        libxml2-dev \
-        libicu-dev \
+        git \
+        unzip \
+        zip \
+        curl \
+        # development packages used to compile PHP extensions in the builder
         libzip-dev \
+        zlib1g-dev \
+        libicu-dev \
+        libxml2-dev \
         libpng-dev \
         libjpeg-dev \
-        libfreetype6-dev \
         libwebp-dev \
         libavif-dev \
-        libaom-dev \
-        libheif-dev \
-        zlib1g-dev \
-        unzip \
-        p7zip-full \
-        git \
-        wget \
-    ; \
-    rm -rf /var/lib/apt/lists/*;
+        libfreetype6-dev \
+        libonig-dev \
+        locales \
+    && rm -rf /var/lib/apt/lists/*
 
-# Use /opt/drupal/web as the project root during build. The runtime image will
-# symlink /opt/drupal/web -> /var/www/html so the container and nginx both see
-# the same files while allowing the compose volume to target /opt/drupal/web.
-COPY web/composer.json /opt/drupal/web/composer.json
-# COPY web/composer.lock /opt/drupal/web/composer.lock
+# Use official Composer binary
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-# Install Composer (php image doesn't include it by default)
-RUN set -eux; \
-    curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer; \
-    composer --version
+WORKDIR /build
 
-# Set composer env vars so all composer invocations use the same home and allow superuser
-ENV COMPOSER_ALLOW_SUPERUSER=1 \
-    COMPOSER_HOME=/tmp/composer
+# Build PHP extensions so the runtime image doesn't need -dev packages
+RUN set -eux \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg --with-avif --with-webp \
+    && docker-php-ext-install -j$(nproc) \
+        pdo \
+        pdo_mysql \
+        mbstring \
+        xml \
+        zip \
+        intl \
+        gd \
+        opcache
 
-# Configure and install PHP extensions
-RUN set -eux; \
-    docker-php-ext-configure gd --with-jpeg --with-webp --with-avif --with-freetype; \
-    docker-php-ext-install -j"$(nproc)" bcmath intl mysqli gd zip
+RUN composer create-project drupal/recommended-project:"^11" /build/drupal --no-interaction --prefer-dist --no-progress && \
+    cd /build/drupal && composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader --no-progress
 
-# Install dependencies and run compile
-# Run quick diagnostics; allow diagnose to fail without breaking the build
-RUN composer --version && composer diagnose || true
+RUN cd /build/drupal && composer require drush/drush:"*" --no-interaction --prefer-dist --no-progress
 
-# Install project dependencies. If the lockfile is out of date, fall back to composer update
-# so automated builds don't fail when composer.lock and composer.json disagree.
-RUN set -eux; \
-    COMPOSER_COMPILE=0 composer install --no-interaction --no-dev --prefer-dist --no-progress || \
-    (COMPOSER_COMPILE=0 composer update --no-interaction --no-dev --prefer-dist --no-progress)
+# Ensure sites/default/files is group-writable and setgid. Ownership is set
+# later by the runtime COPY --chown instruction.
+RUN chmod 2775 /build/drupal/web/sites/default/files
 
-# Run compile step (composer plugin command). This needs vendor present; do not ignore failures.
-RUN COMPOSER_COMPILE=1 composer compile --all --no-interaction
+###############################################################################
+# Runtime: PHP-FPM image with runtime deps and built project
+###############################################################################
+FROM php:8.3-fpm AS runtime
 
-# Download cv.phar in builder (builder has wget available) and make it executable so
-# we can copy it into the minimal runtime image without running network commands there.
-RUN wget -qO /usr/local/bin/cv https://download.civicrm.org/cv/cv.phar && chmod +x /usr/local/bin/cv
+LABEL maintainer="Cocoa-County"
 
-### Runtime stage
-FROM php:8.3-fpm
-
-# Minimal runtime image: install only small runtime packages (curl + ca-certificates)
-# and copy compiled PHP extensions and php conf from the builder stage. This keeps
-# the final image small and free of build tools.
-RUN set -eux; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends \
+# Install runtime packages required by Drupal
+RUN set -eux \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+    bash \
         ca-certificates \
+        zip \
+        unzip \
+        libxml2 \
+        zlib1g \
+        locales \
         curl \
-        # MySQL client program for CLI tasks and runtime MySQL client libraries
-        # default-mysql-client \
-        # Runtime libraries required by the GD extension (ensure AVIF and other
-        # image format libraries are present so the compiled gd extension can load)
         libicu76 \
         libpng16-16 \
         libjpeg62-turbo \
@@ -92,29 +88,45 @@ RUN set -eux; \
     ; \
     rm -rf /var/lib/apt/lists/*;
 
-# Copy compiled PHP extensions and configuration from the builder stage so we don't
-# need to rebuild extensions in the runtime image.
-COPY --from=builder /usr/local/lib/php/extensions /usr/local/lib/php/extensions
-COPY --from=builder /usr/local/etc/php/conf.d /usr/local/etc/php/conf.d
+# Copy compiled extensions and PHP config from builder
+COPY --from=builder /usr/local/lib/php/extensions/ /usr/local/lib/php/extensions/
+COPY --from=builder /usr/local/etc/php/conf.d/ /usr/local/etc/php/conf.d/
 
-# Copy composer.json and vendor from builder into /opt/drupal/web
-COPY --from=builder /opt/drupal/web/composer.json /opt/drupal/web/composer.json
-COPY --from=builder /opt/drupal/web/composer.lock /opt/drupal/web/composer.lock
-COPY --from=builder --chown=www-data:www-data /opt/drupal/web/vendor /opt/drupal/web/vendor
+# Copy Composer binary (optional)
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-# Ensure the runtime symlinks the drupal path into /var/www/html so other
-# services (nginx) using /var/www/html will see the same files.
-RUN ln -sfn /opt/drupal/web /var/www/html
+# Copy built Drupal site to /opt/drupal and set owner to www-data
+COPY --chown=www-data:www-data --from=builder /build/drupal /opt/drupal
 
-# Copy cv CLI from builder (downloaded there) into the runtime image
-COPY --from=builder /usr/local/bin/cv /usr/local/bin/cv
+# Replace /var/www/html with a symlink to the Drupal webroot
+RUN if [ -d /var/www/html ]; then rm -rf /var/www/html; fi \
+    && ln -sfn /opt/drupal/web /var/www/html
 
-# Copy drupal entrypoint script (site init / autoinstall)
+# Add project binaries (e.g. vendor/bin/drush) to PATH
+ENV PATH="/opt/drupal/vendor/bin:${PATH}"
+
+# Work in the Drupal webroot
+WORKDIR /var/www/html
+
+# PHP configuration for Drupal
+RUN { \
+    echo "memory_limit=512M"; \
+    echo "upload_max_filesize=100M"; \
+    echo "post_max_size=110M"; \
+    echo "max_execution_time=300"; \
+    echo "opcache.enable=1"; \
+    echo "opcache.memory_consumption=128"; \
+    echo "opcache.interned_strings_buffer=8"; \
+    echo "opcache.max_accelerated_files=4000"; \
+    echo "date.timezone=UTC"; \
+} > /usr/local/etc/php/conf.d/drupal-recommended.ini
+
+# Expose FPM port
+EXPOSE 9000
+
+# Copy and enable the container entrypoint script (runs before php-fpm)
 COPY docker/drupal-entrypoint.sh /usr/local/bin/drupal-entrypoint.sh
 RUN chmod +x /usr/local/bin/drupal-entrypoint.sh
 
-ENV PATH="/var/www/html/vendor/bin:${PATH}"
-
+# Entrypoint will exec php-fpm
 ENTRYPOINT ["/usr/local/bin/drupal-entrypoint.sh"]
-
-USER www-data
