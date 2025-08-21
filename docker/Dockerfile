@@ -1,9 +1,9 @@
 # Multi-stage Dockerfile for PHP 8.3 FPM (builder -> runtime)
 
 ###############################################################################
-# Builder: install Composer, build PHP extensions, install project deps
+# Drupal Builder: Build and install Drupal
 ###############################################################################
-FROM php:8.3-fpm AS builder
+FROM php:8.3-fpm AS drupal-builder
 
 LABEL maintainer="Cocoa-County"
 
@@ -41,6 +41,8 @@ RUN set -eux \
     && docker-php-ext-install -j$(nproc) \
         pdo \
         pdo_mysql \
+        mysqli \
+        bcmath \
         mbstring \
         xml \
         zip \
@@ -55,10 +57,39 @@ RUN cd /build/drupal && composer require drush/drush:"*" --no-interaction --pref
 
 # Ensure sites/default/files is group-writable and setgid. Ownership is set
 # later by the runtime COPY --chown instruction.
-RUN chmod 2775 /build/drupal/web/sites/default/files
+RUN mkdir -p /build/drupal/web/sites/default/files && \
+    chmod 2775 /build/drupal/web/sites/default/files
 
 ###############################################################################
-# Runtime: PHP-FPM image with runtime deps and built project
+# CiviCRM Builder: Build and install CiviCRM
+###############################################################################
+FROM drupal-builder AS civicrm-builder
+
+LABEL maintainer="Cocoa-County"
+
+#install wget
+RUN apt-get update && apt-get install -y --no-install-recommends wget && rm -rf /var/lib/apt/lists/*
+
+# Install cv CLI
+RUN wget -qO /usr/local/bin/cv https://download.civicrm.org/cv/cv.phar && chmod +x /usr/local/bin/cv
+
+WORKDIR /build/drupal
+
+# Allow Composer plugins required by CiviCRM packages during automated installs
+# ENV COMPOSER_ALLOW_PLUGINS={"cweagans/composer-patches":true,"civicrm/civicrm-asset-plugin":true,"civicrm/composer-downloads-plugin":true,"civicrm/composer-compile-plugin":true}
+ENV COMPOSER_COMPILE=1
+
+# SEE: https://docs.civicrm.org/installation/en/latest/drupal/
+RUN composer config extra.enable-patching true && \
+    composer config --no-plugins allow-plugins.cweagans/composer-patches true && \
+    composer config --no-plugins allow-plugins.civicrm/civicrm-asset-plugin true && \
+    composer config --no-plugins allow-plugins.civicrm/composer-downloads-plugin true && \
+    composer config --no-plugins allow-plugins.civicrm/composer-compile-plugin true && \
+    composer require civicrm/civicrm-core civicrm/civicrm-packages civicrm/civicrm-drupal-8 --no-interaction --prefer-dist --no-progress && \
+    composer require civicrm/cli-tools --no-interaction --prefer-dist --no-progress
+
+###############################################################################
+# Runtime: Create the final runtime image with Drupal and CiviCRM
 ###############################################################################
 FROM php:8.3-fpm AS runtime
 
@@ -84,19 +115,19 @@ RUN set -eux \
         libavif16 \
         libaom3 \
         libheif1 \
-        zlib1g \
+        libzip5 \
     ; \
     rm -rf /var/lib/apt/lists/*;
 
-# Copy compiled extensions and PHP config from builder
-COPY --from=builder /usr/local/lib/php/extensions/ /usr/local/lib/php/extensions/
-COPY --from=builder /usr/local/etc/php/conf.d/ /usr/local/etc/php/conf.d/
+# Copy compiled extensions and PHP config from civicrm-builder
+COPY --from=civicrm-builder /usr/local/lib/php/extensions/ /usr/local/lib/php/extensions/
+COPY --from=civicrm-builder /usr/local/etc/php/conf.d/ /usr/local/etc/php/conf.d/
 
 # Copy Composer binary (optional)
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 # Copy built Drupal site to /opt/drupal and set owner to www-data
-COPY --chown=www-data:www-data --from=builder /build/drupal /opt/drupal
+COPY --chown=www-data:www-data --from=civicrm-builder /build/drupal /opt/drupal
 
 # Replace /var/www/html with a symlink to the Drupal webroot
 RUN if [ -d /var/www/html ]; then rm -rf /var/www/html; fi \
@@ -104,6 +135,9 @@ RUN if [ -d /var/www/html ]; then rm -rf /var/www/html; fi \
 
 # Add project binaries (e.g. vendor/bin/drush) to PATH
 ENV PATH="/opt/drupal/vendor/bin:${PATH}"
+
+# Copy cv CLI from builder (downloaded there) into the runtime image
+COPY --from=civicrm-builder /usr/local/bin/cv /usr/local/bin/cv
 
 # Work in the Drupal webroot
 WORKDIR /var/www/html

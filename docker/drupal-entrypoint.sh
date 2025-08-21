@@ -62,7 +62,7 @@ if [ "${AUTO_INSTALL:-0}" = "1" ]; then
 	DRUPAL_SITE_NAME=${DRUPAL_SITE_NAME:-"Drupal Site"}
 	ADMIN_USER=${ADMIN_USER:-admin}
 	ADMIN_PASS=${ADMIN_PASS:-admin}
-	DRUSH_ROOT=${DRUSH_ROOT:-/var/www/html}
+	DRUSH_ROOT=${DRUSH_ROOT:-/opt/drupal/web}
 
 	# If settings.php exists, assume site is already installed
 	if [ -f "${DRUSH_ROOT}/sites/default/settings.php" ]; then
@@ -79,23 +79,82 @@ if [ "${AUTO_INSTALL:-0}" = "1" ]; then
 	# Avoid printing the DB password to logs; show a masked URL instead.
 	DB_URL_MASK="mysql://${DB_USER}:****@${DB_HOST}:${DB_PORT}/${DB_NAME}"
 	echo "Running drush site:install with DB URL: ${DB_URL_MASK} (root: ${DRUSH_ROOT})"
+		# Write full drush install output to a log so it can be inspected later
+		DRUPAL_INSTALL_LOG=${DRUPAL_INSTALL_LOG:-/var/log/drupal-install.log}
+		mkdir -p "$(dirname "$DRUPAL_INSTALL_LOG")"
+		: > "${DRUPAL_INSTALL_LOG}"
 		set +e
-		install_err=$(drush site:install standard --db-url="${DB_URL}" --site-name="${DRUPAL_SITE_NAME}" --account-name="${ADMIN_USER}" --account-pass="${ADMIN_PASS}" --yes --root="${DRUSH_ROOT}" 2>&1 || true)
+		drush site:install standard --db-url="${DB_URL}" --site-name="${DRUPAL_SITE_NAME}" --account-name="${ADMIN_USER}" --account-pass="${ADMIN_PASS}" --yes --root="${DRUSH_ROOT}" >"${DRUPAL_INSTALL_LOG}" 2>&1
 		rc=$?
 		set -e
 		if [ $rc -eq 0 ]; then
-			echo "Drupal site installed successfully."
+			echo "Drupal site installed successfully. Install log (${DRUPAL_INSTALL_LOG}):"
+			cat "${DRUPAL_INSTALL_LOG}"
 		else
-			echo "ERROR: Drupal autoinstall failed (exit code: $rc)."
-			if [ -n "${install_err}" ]; then
-				echo "drush install output:"
-				echo "${install_err}"
-			fi
+			echo "ERROR: Drupal autoinstall failed (exit code: $rc). Install log (${DRUPAL_INSTALL_LOG}):"
+			cat "${DRUPAL_INSTALL_LOG}"
 			if [ "${AUTO_INSTALL_REQUIRED:-0}" = "1" ]; then
 				echo "AUTO_INSTALL_REQUIRED=1 — exiting with failure."
 				exit 1
 			else
 				echo "Continuing startup despite autoinstall failure."
+			fi
+		fi
+	fi
+fi
+
+# If requested, attempt a one-time automated CiviCRM install using cv
+# Controlled via environment variables:
+# CIVICRM_INSTALL=1                -> run CiviCRM install
+# CIVICRM_INSTALL_REQUIRED=1       -> exit with failure if install fails
+# CIVICRM_CMS_BASE_URL             -> the CMS base URL (ex: https://d10.example.org)
+# CIVICRM_DB_DSN                  -> the DB DSN (ex: mysql://user:pass@host:3306/dbname)
+# CV_ROOT                         -> path to Drupal root (defaults to DRUSH_ROOT or /var/www/html)
+if [ "${CIVICRM_INSTALL:-0}" = "1" ]; then
+	echo "CIVICRM_INSTALL=1; attempting CiviCRM core:install via cv."
+
+	CV_ROOT=${CV_ROOT:-/opt/drupal/web}
+	# Default CMS URL to localhost and use PORT_HTTP from compose (fallback 8080)
+	CIVICRM_CMS_BASE_URL=${CIVICRM_CMS_BASE_URL:-"http://localhost:${PORT_HTTP:-8080}"}
+	CIVICRM_DB_DSN=${CIVICRM_DB_DSN:-""}
+
+	# Check for cv binary
+	if ! command -v cv >/dev/null 2>&1; then
+		echo "ERROR: cv (CiviCRM CLI) not found in PATH; skipping CiviCRM install."
+		if [ "${CIVICRM_INSTALL_REQUIRED:-0}" = "1" ]; then
+			echo "CIVICRM_INSTALL_REQUIRED=1 — exiting with failure."
+			exit 1
+		else
+			echo "Continuing startup despite missing cv."
+		fi
+	else
+		# Avoid printing secrets: mask password in DSN for logs
+		if [ -n "${CIVICRM_DB_DSN}" ]; then
+			CIVICRM_DB_DSN_MASKED=$(echo "${CIVICRM_DB_DSN}" | sed -E 's%(:[^:@]+@)%:****@%')
+		else
+			CIVICRM_DB_DSN_MASKED="(empty)"
+		fi
+
+		echo "Running cv core:install with CMS URL: ${CIVICRM_CMS_BASE_URL} and DB: ${CIVICRM_DB_DSN_MASKED} (root: ${CV_ROOT})"
+		# Write full cv install output to a log so it can be inspected later
+		CIVICRM_INSTALL_LOG=${CIVICRM_INSTALL_LOG:-/var/log/civicrm-install.log}
+		mkdir -p "$(dirname "$CIVICRM_INSTALL_LOG")"
+		: > "${CIVICRM_INSTALL_LOG}"
+		set +e
+		(cd "${CV_ROOT}" && cv core:install --url="${CIVICRM_CMS_BASE_URL}" --db="${CIVICRM_DB_DSN}") >"${CIVICRM_INSTALL_LOG}" 2>&1
+		rc=$?
+		set -e
+		if [ $rc -eq 0 ]; then
+			echo "CiviCRM installed successfully. Install log (${CIVICRM_INSTALL_LOG}):"
+			cat "${CIVICRM_INSTALL_LOG}"
+		else
+			echo "ERROR: CiviCRM install failed (exit code: $rc). Install log (${CIVICRM_INSTALL_LOG}):"
+			cat "${CIVICRM_INSTALL_LOG}"
+			if [ "${CIVICRM_INSTALL_REQUIRED:-0}" = "1" ]; then
+				echo "CIVICRM_INSTALL_REQUIRED=1 — exiting with failure."
+				exit 1
+			else
+				echo "Continuing startup despite CiviCRM install failure." 
 			fi
 		fi
 	fi
