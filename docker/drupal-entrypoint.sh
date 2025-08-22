@@ -147,6 +147,8 @@ if [ "${CIVICRM_INSTALL:-0}" = "1" ]; then
 		if [ $rc -eq 0 ]; then
 			echo "CiviCRM installed successfully. Install log (${CIVICRM_INSTALL_LOG}):"
 			cat "${CIVICRM_INSTALL_LOG}"
+
+			chown www-data:www-data -R /opt/drupal/web/sites/default/files/civicrm
 		else
 			echo "ERROR: CiviCRM install failed (exit code: $rc). Install log (${CIVICRM_INSTALL_LOG}):"
 			cat "${CIVICRM_INSTALL_LOG}"
