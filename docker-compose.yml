@@ -17,7 +17,7 @@ services:
       AUTO_INSTALL: ${AUTO_INSTALL:-0}
       # If set to 1, container will exit on autoinstall failure
       AUTO_INSTALL_REQUIRED: ${AUTO_INSTALL_REQUIRED:-0}
-      DRUPAL_SITE_NAME: '${DRUPAL_SITE_NAME:-Cocoa County Drupal}'
+      DRUPAL_SITE_NAME: '${DRUPAL_SITE_NAME:-Drupal}'
       ADMIN_USER: ${ADMIN_USER:-admin}
       ADMIN_PASS: ${ADMIN_PASS:-admin}
     depends_on:
@@ -31,12 +31,12 @@ services:
     container_name: drupal_db
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${DB_NAME}
-      MYSQL_USER: ${DB_USER}
-      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${MARIADB_DATABASE}
+      MARIADB_USER: ${MARIADB_USER}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD}
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$DB_ROOT_PASSWORD\" >/dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$MARIADB_ROOT_PASSWORD\" >/dev/null 2>&1 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
