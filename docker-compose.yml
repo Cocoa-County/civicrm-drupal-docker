@@ -5,27 +5,42 @@ services:
       dockerfile: docker/Dockerfile
     container_name: drupal_app
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       DRUPAL_DB_HOST: db
       DRUPAL_DB_NAME: ${DB_NAME}
       DRUPAL_DB_USER: ${DB_USER}
       DRUPAL_DB_PASSWORD: ${DB_PASSWORD}
+      DRUPAL_DB_PORT: ${DRUPAL_DB_PORT:-3306}
+      # Enable one-time automated site install inside the container (set to 1 to run)
+      AUTO_INSTALL: ${AUTO_INSTALL:-0}
+      # If set to 1, container will exit on autoinstall failure
+      AUTO_INSTALL_REQUIRED: ${AUTO_INSTALL_REQUIRED:-0}
+      DRUPAL_SITE_NAME: '${DRUPAL_SITE_NAME:-Drupal}'
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASS: ${ADMIN_PASS:-admin}
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     volumes:
       - drupal_data:/var/www/html
-      - ./web/composer.json:/var/www/html/composer.json
-      - ./web/composer.lock:/var/www/html/composer.lock
 
   db:
     image: mariadb:10.11
     container_name: drupal_db
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${DB_NAME}
-      MYSQL_USER: ${DB_USER}
-      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${MARIADB_DATABASE}
+      MARIADB_USER: ${MARIADB_USER}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$MARIADB_ROOT_PASSWORD\" >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     volumes:
       - db_data:/var/lib/mysql
 

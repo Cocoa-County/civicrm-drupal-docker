@@ -1,107 +1,80 @@
-### Builder stage
-FROM drupal:11.1.8-php8.3-fpm AS builder
+# Single builder + slim runtime for PHP 8.3 FPM
+FROM php:8.3-fpm AS builder
+LABEL maintainer="Cocoa-County"
 
-# Install build tools and native libraries.
-USER root
+# Build deps (composer + compiling extensions)
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-        build-essential \
-        autoconf \
-        pkg-config \
-        ca-certificates \
-        libxml2-dev \
-        libicu-dev \
-        libzip-dev \
-        libpng-dev \
-        libjpeg-dev \
-        libfreetype6-dev \
-        libwebp-dev \
-        libavif-dev \
-        libaom-dev \
-        libheif-dev \
-        zlib1g-dev \
-        unzip \
-        p7zip-full \
-        git \
-        wget \
-    ; \
-    rm -rf /var/lib/apt/lists/*;
+        ca-certificates git unzip zip curl wget libzip-dev zlib1g-dev libicu-dev libxml2-dev \
+        libpng-dev libjpeg-dev libwebp-dev libavif-dev libfreetype6-dev libonig-dev locales; \
+    rm -rf /var/lib/apt/lists/*
 
-# Copy project composer.json and set the working directory.
-COPY web/composer.json /var/www/html/composer.json
-COPY web/composer.lock /var/www/html/composer.lock
-WORKDIR /var/www/html
-# Composer provided by base image
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+WORKDIR /build
 
-# Set composer env vars so all composer invocations use the same home and allow superuser
-ENV COMPOSER_ALLOW_SUPERUSER=1 \
-    COMPOSER_HOME=/tmp/composer
-
-# Composer global config
-RUN composer config -g cache-dir /tmp/composer-cache
-RUN composer config --no-plugins allow-plugins.composer/installers true --global
-RUN composer config --no-plugins allow-plugins.cweagans/composer-patches true --global
-RUN composer config --no-plugins allow-plugins.civicrm/composer-downloads-plugin true --global
-RUN composer config --no-plugins allow-plugins.civicrm/composer-compile-plugin true --global
-
-# Configure and install PHP extensions
+# Configure and compile PHP extensions to keep runtime slim
 RUN set -eux; \
-    docker-php-ext-configure gd --with-jpeg --with-webp --with-avif --with-freetype; \
-    docker-php-ext-install -j"$(nproc)" bcmath intl mysqli gd zip
+    docker-php-ext-configure gd --with-freetype --with-jpeg --with-avif --with-webp; \
+    docker-php-ext-install -j$(nproc) pdo pdo_mysql mysqli bcmath mbstring xml zip intl gd opcache
 
-# Install dependencies and run compile
-# Run quick diagnostics; allow diagnose to fail without breaking the build
-RUN composer --version && composer diagnose || true
-
-# Install project dependencies. If the lockfile is out of date, fall back to composer update
-# so automated builds don't fail when composer.lock and composer.json disagree.
+# Install Drupal, drush, cv, and CiviCRM via Composer
 RUN set -eux; \
-    COMPOSER_COMPILE=0 composer install --no-interaction --no-dev --prefer-dist --no-progress || \
-    (COMPOSER_COMPILE=0 composer update --no-interaction --no-dev --prefer-dist --no-progress)
+    composer create-project drupal/recommended-project:"^11" /build/drupal --no-interaction --prefer-dist --no-progress; \
+    cd /build/drupal; \
+    composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader --no-progress; \
+    composer require drush/drush:"*" --no-interaction --prefer-dist --no-progress; \
+    wget -qO /usr/local/bin/cv https://download.civicrm.org/cv/cv.phar; chmod +x /usr/local/bin/cv; \
+    cd /build/drupal; \
+    export COMPOSER_COMPILE=1; \
+    composer config extra.enable-patching true; \
+    composer config --no-plugins allow-plugins.cweagans/composer-patches true; \
+    composer config --no-plugins allow-plugins.civicrm/civicrm-asset-plugin true; \
+    composer config --no-plugins allow-plugins.civicrm/composer-downloads-plugin true; \
+    composer config --no-plugins allow-plugins.civicrm/composer-compile-plugin true; \
+    composer require civicrm/civicrm-core civicrm/civicrm-packages civicrm/civicrm-drupal-8 --no-interaction --prefer-dist --no-progress; \
+    composer require civicrm/cli-tools --no-interaction --prefer-dist --no-progress
 
-# Run compile step (composer plugin command). This needs vendor present; do not ignore failures.
-RUN COMPOSER_COMPILE=1 composer compile --all --no-interaction
+# Make files dir group-writeable (ownership set when copying to runtime)
+RUN mkdir -p /build/drupal/web/sites/default/files && chmod 2775 /build/drupal/web/sites/default/files
 
-# Download cv.phar in builder (builder has wget available) and make it executable so
-# we can copy it into the minimal runtime image without running network commands there.
-RUN wget -qO /usr/local/bin/cv https://download.civicrm.org/cv/cv.phar && chmod +x /usr/local/bin/cv
+FROM php:8.3-fpm AS runtime
+LABEL maintainer="Cocoa-County"
 
-### Runtime stage
-FROM drupal:11.1.8-php8.3-fpm
-
-# Minimal runtime image: install only small runtime packages (curl + ca-certificates)
-# and copy compiled PHP extensions and php conf from the builder stage. This keeps
-# the final image small and free of build tools.
+# Runtime deps only
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
-        # Runtime libraries required by the GD extension (ensure AVIF and other
-        # image format libraries are present so the compiled gd extension can load)
-        libpng-dev \
-        libjpeg-dev \
-        libfreetype6-dev \
-        libwebp-dev \
-        libavif-dev \
-        libaom-dev \
-        libheif-dev \
-        zlib1g \
-    ; \
-    rm -rf /var/lib/apt/lists/*;
+        bash ca-certificates zip unzip libxml2 zlib1g locales curl libicu76 libpng16-16 \
+        libjpeg62-turbo libfreetype6 libwebp7 libavif16 libaom3 libheif1 libzip5; \
+    rm -rf /var/lib/apt/lists/*
 
-# Copy compiled PHP extensions and configuration from the builder stage so we don't
-# need to rebuild extensions in the runtime image.
-COPY --from=builder /usr/local/lib/php/extensions /usr/local/lib/php/extensions
-COPY --from=builder /usr/local/etc/php/conf.d /usr/local/etc/php/conf.d
-
-# Copy composer.json and vendor from builder
-COPY --from=builder /var/www/html/composer.json /var/www/html/composer.json
-COPY --from=builder /var/www/html/composer.lock /var/www/html/composer.lock
-COPY --from=builder --chown=www-data:www-data /var/www/html/vendor /var/www/html/vendor
-
-# Copy cv CLI from builder (downloaded there) into the runtime image
+# Copy compiled extensions, php conf, composer, cv and the app
+COPY --from=builder /usr/local/lib/php/extensions/ /usr/local/lib/php/extensions/
+COPY --from=builder /usr/local/etc/php/conf.d/ /usr/local/etc/php/conf.d/
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+COPY --chown=www-data:www-data --from=builder /build/drupal /opt/drupal
 COPY --from=builder /usr/local/bin/cv /usr/local/bin/cv
 
-USER www-data
+# Link webroot and set PATH
+RUN rm -rf /var/www/html || true; ln -sfn /opt/drupal/web /var/www/html
+ENV PATH="/opt/drupal/vendor/bin:${PATH}"
+WORKDIR /var/www/html
+
+# PHP settings recommended for Drupal
+RUN cat > /usr/local/etc/php/conf.d/drupal-recommended.ini <<'INI'
+memory_limit=512M
+upload_max_filesize=100M
+post_max_size=110M
+max_execution_time=300
+opcache.enable=1
+opcache.memory_consumption=128
+opcache.interned_strings_buffer=8
+opcache.max_accelerated_files=4000
+date.timezone=UTC
+INI
+
+EXPOSE 9000
+COPY docker/drupal-entrypoint.sh /usr/local/bin/drupal-entrypoint.sh
+RUN chmod +x /usr/local/bin/drupal-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/drupal-entrypoint.sh"]
