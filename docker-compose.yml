@@ -12,14 +12,10 @@ services:
       DRUPAL_DB_NAME: ${DB_NAME}
       DRUPAL_DB_USER: ${DB_USER}
       DRUPAL_DB_PASSWORD: ${DB_PASSWORD}
-      DRUPAL_DB_PORT: ${DRUPAL_DB_PORT:-3306}
-      # Enable one-time automated site install inside the container (set to 1 to run)
-      AUTO_INSTALL: ${AUTO_INSTALL:-0}
-      # If set to 1, container will exit on autoinstall failure
-      AUTO_INSTALL_REQUIRED: ${AUTO_INSTALL_REQUIRED:-0}
+      DRUPAL_DB_PORT: ${DB_PORT:-3306}
       DRUPAL_SITE_NAME: '${DRUPAL_SITE_NAME:-Drupal}'
-      ADMIN_USER: ${ADMIN_USER:-admin}
-      ADMIN_PASS: ${ADMIN_PASS:-admin}
+      ADMIN_USER: ${DRUPAL_ADMIN_USER:-admin}
+      ADMIN_PASS: ${DRUPAL_ADMIN_PASS:-admin}
     depends_on:
       db:
         condition: service_healthy
@@ -31,12 +27,12 @@ services:
     container_name: drupal_db
     restart: unless-stopped
     environment:
-      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
-      MARIADB_DATABASE: ${MARIADB_DATABASE}
-      MARIADB_USER: ${MARIADB_USER}
-      MARIADB_PASSWORD: ${MARIADB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${DB_NAME}
+      MARIADB_USER: ${DB_USER}
+      MARIADB_PASSWORD: ${DB_PASSWORD}
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$MARIADB_ROOT_PASSWORD\" >/dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$DB_ROOT_PASSWORD\" >/dev/null 2>&1 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -49,7 +45,7 @@ services:
     container_name: drupal_nginx
     restart: unless-stopped
     ports:
-      - "${PORT_HTTP:-8080}:80"
+      - "${NGINX_PORT:-8080}:80"
     depends_on:
       - drupal
     volumes:

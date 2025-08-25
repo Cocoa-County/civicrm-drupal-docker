@@ -69,7 +69,7 @@ ENV PATH="/opt/drupal/vendor/bin:${PATH}"
 WORKDIR /var/www/html
 
 # Copy Drupal Docker deployment settings
-COPY --chown=www-data:www-data docker/settings.docker.php /opt/drupal/sites/default/settings.docker.php
+COPY --chown=www-data:www-data docker/settings.docker.php /opt/drupal/web/sites/default/settings.docker.php
 
 # PHP settings recommended for Drupal
 RUN cat > /usr/local/etc/php/conf.d/drupal-recommended.ini <<'INI'
