@@ -1,6 +1,12 @@
-# Single builder + slim runtime for PHP 8.3 FPM
-FROM php:8.3-fpm AS builder
-LABEL maintainer="Cocoa-County"
+# Single builder + slim runtime for PHP
+ARG BASE_IMAGE=php:8.3-fpm
+
+ARG LABEL_MAINTAINER="https://github.com/cocoa-county"
+ARG LABEL_REPOSITORY="https://github.com/cocoa-county/civicrm-drupal-docker"
+
+FROM ${BASE_IMAGE} AS builder
+LABEL maintainer="${LABEL_MAINTAINER}"
+LABEL repository="${LABEL_REPOSITORY}"
 
 # Build deps (composer + compiling extensions)
 RUN set -eux; \
@@ -38,8 +44,9 @@ RUN set -eux; \
 # Make files dir group-writeable (ownership set when copying to runtime)
 RUN mkdir -p /build/drupal/web/sites/default/files && chmod 2775 /build/drupal/web/sites/default/files
 
-FROM php:8.3-fpm AS runtime
-LABEL maintainer="Cocoa-County"
+FROM ${BASE_IMAGE} AS runtime
+LABEL maintainer="${LABEL_MAINTAINER}"
+LABEL repository="${LABEL_REPOSITORY}"
 
 # Runtime deps only
 RUN set -eux; \
@@ -60,6 +67,9 @@ COPY --from=builder /usr/local/bin/cv /usr/local/bin/cv
 RUN rm -rf /var/www/html || true; ln -sfn /opt/drupal/web /var/www/html
 ENV PATH="/opt/drupal/vendor/bin:${PATH}"
 WORKDIR /var/www/html
+
+# Copy Drupal Docker deployment settings
+COPY --chown=www-data:www-data docker/settings.docker.php /opt/drupal/sites/default/settings.docker.php
 
 # PHP settings recommended for Drupal
 RUN cat > /usr/local/etc/php/conf.d/drupal-recommended.ini <<'INI'
